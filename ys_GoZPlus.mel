@@ -1,25 +1,153 @@
-//ys_GoZPlus v.0.1
+//ys_GoZPlus v.0.2
 //
 //Author: Yin Shiuan
-//Date: Jan 30, 2014
+//Date: Fab 20, 2014
 //Platform: windows
 //Version: Maya2014
 //All Rights Reserved.
 //
+//
+//Change Log:
+//    v.0.2:
+//    Fab 20, 2014
+//        Keep ZB shading network if detected texture connection.
+//        Keep ZB uv.
+//        Turn on visible in reflections & refractions.
+//    v.0.1:
+//    Jan 30, 2014
+//        First release.
+//
+//**************************************************************************************
+
+
+/**********PRE GOZBRUSH TO MAYA**********/
+global proc preGoZToMayaProc(string $objectPath){
+    string $objFileName = $objectPath + ".ma";
+    string $objectName = `basenameEx($objFileName)`;
+    string $allZBObjs[] = checkZBMeshProc();
+    int $chekName = chekNameProc($objectName);
+    
+    if($chekName == 1){//goz object name same with file name. use file name to duplicate.
+        if(!`objExists "dupOrigMesh_grp"`){
+            group -em -n "dupOrigMesh_grp";
+        }
+
+        string $dupName = $objectName + "_dup";
+        string $dupOrigMesh[] = `duplicate -rr -n $dupName $objectName`;
+        string $phongSHD = `createNode phong`;
+
+        select -r $objectName;
+        hyperShade -assign $phongSHD;
+        parent $dupOrigMesh "dupOrigMesh_grp";
+        select -r $objectName;
+    }else{//goz object name different with file name. use goz object name to duplicate.
+        if(`size $allZBObjs` != 0){
+            if(!`objExists "dupOrigMesh_grp"`){
+                group -em -n "dupOrigMesh_grp";
+            }
+
+            for($zbObj in $allZBObjs){
+                string $dupName = $zbObj + "_dup";
+                string $dupOrigMesh[] = `duplicate -rr -n $dupName $zbObj`;
+
+                parent $dupOrigMesh "dupOrigMesh_grp";
+            }
+        }
+    }
+}
+
+/**********CHECK GOZ MESH IN THE SCENE**********/
+global proc string[] checkZBMeshProc(){
+    string $allMeshes[] = `ls -v -ni -typ "mesh"`;
+    string $allZBObjs[];
+
+    clear $allZBObjs;
+
+    for($mesh in $allMeshes){
+        string $zbID[0] = `listAttr -st "GoZBrushID" $mesh`;
+        if($zbID[0] == "GoZBrushID"){
+            string $zbObj[0] = `listRelatives -p $mesh`;
+            $allZBObjs[`size $allZBObjs`] = $zbObj[0];
+        }
+    }
+
+    return $allZBObjs;
+}
+
+/**********CHECK MESH NAME**********/
+global proc int chekNameProc(string $objectName){
+    string $allZBObjs[] = checkZBMeshProc();
+    int $checkName = 0;//different name.
+
+    if(`size $allZBObjs` != 0){
+        for($zbObj in $allZBObjs){
+            if($zbObj == $objectName){
+                $checkName = 1;//same name.
+            }
+        }
+    }
+
+    return $checkName;
+}
+
+/**********CHECK TOPOLOGY**********/
+global proc int checkTopoProc(string $objectName, string $dupObj){
+    int $checkTopo;
+    int $objVtxCount[] = `polyEvaluate -v $objectName`;
+    int $dupObjVtxCount[] = `polyEvaluate -v $dupObj`;
+    int $objEdgeCount[] = `polyEvaluate -e $objectName`;
+    int $dupObjEdgeCount[] = `polyEvaluate -e $dupObj`;
+
+    if($objVtxCount[0] == $dupObjVtxCount[0] && $objEdgeCount[0] == $dupObjEdgeCount[0]){
+        $checkTopo = 1;//same mesh.
+    }else{
+        $checkTopo = 0;//different mesh.
+    }
+
+    return $checkTopo;
+}
+
+/**********SET ATTRIBUTES**********/
+global proc setAttrProc(string $objectName, string $dupName){
+    string $dupNameShape[] = `listRelatives -s -ni $dupName`;
+
+    setAttr ($dupName + ".visibleInReflections") 1;
+    setAttr ($dupName + ".visibleInRefractions") 1;
+    setAttr -typ "string" ($dupName + ".GoZBrushID") $objectName;
+    setAttr -typ "string" ($dupNameShape[0] + ".GoZBrushID") $objectName;
+}
+
+/**********TRANSFER UV**********/
+global proc transfUVProc(string $objectName, string $dupName){
+    transferAttributes -pos 0 -nml 0 -uvs 2 -col 2 -spa 4 -sm 3 -fuv 0 -clb 1 $objectName $dupName;
+    delete -ch $dupName;
+}
+
 /**********DELETE ZBRUSH BLINN SHADER**********/
-global proc delSHDProc(string $objName){
-    select -r $objName;
+global proc int delSHDProc(string $objectName, string $dupName){
+    select -r $objectName;
     hyperShade -smn;
     string $selSHD[] = `ls -sl -fl`;
-    string $selSE[] = `listConnections -d 1 -t "shadingEngine" $selSHD`;
-    delete $selSHD $selSE;
-    select -r $objName;
+    string $getSE[] = `listConnections -d 1 -t "shadingEngine" $selSHD`;
+    string $getTex[] = `listConnections -s 1 -d 0 $selSHD`;
+    int $zbSHD;
+
+    if(`size $getTex` == 0){
+        delete $selSHD $getSE;
+        select -r $objectName;
+        $zbSHD = 1; //default blinn without texture connection. delete it.
+    }else{
+        select -r $dupName;
+        hyperShade -a $selSHD;
+        $zbSHD = 0; //default blinn whith texture connection. keep it.
+    }
+
+    return $zbSHD;
 }
 
 /**********BLEND SHAPES**********/
-global proc blendShapesProc(string $objName){
-    string $objBSTargets[] = `blendShape -q -t $objName`;
-    string $dupName = $objName + "_dup";
+global proc blendShapesProc(string $objectName, string $dupName){
+    string $objBSTargets[] = `blendShape -q -t $objectName`;
     string $dupShape[] = `listRelatives -s -ni $dupName`;
     string $dupBSNode[] = `listConnections -s 1 -d 0 -t "blendShape" $dupShape`;
 
@@ -34,62 +162,84 @@ global proc blendShapesProc(string $objName){
     }
 }
 
-/**********PRE GOZBRUSH TO MAYA**********/
-global proc preGoZToMayaProc(string $objectPath){
-    string $objFileName = $objectPath + ".ma";
-    string $objName = `basenameEx($objFileName)`;
-    string $dupName = $objName + "_dup";
+/**********YSGOZ TO MAYA MAIN FUNCTION**********/
+global proc ysGoZFunctionProc(string $objectName, string $dupName, string $objBSNode[]){
+    blendShape -w 0 1.0 $objectName $dupName;
+    delete -ch $dupName;
+    int $zbSHD = delSHDProc($objectName, $dupName);
 
-    if(`objExists $objName`){
-        string $dupOrigMesh[] = `duplicate -rr -n $dupName $objName`;
-        string $blinnSHD = `createNode blinn`;
+    //fix attributes.
+    setAttrProc($objectName, $dupName);
 
-        if(!`objExists "dupOrigMesh_grp"`){
-            group -em -n "dupOrigMesh_grp";
-        }
+    //transfer uv.
+    transfUVProc($objectName, $dupName);
 
-        parent $dupOrigMesh "dupOrigMesh_grp";
-        hide "dupOrigMesh_grp";
-        select -r $objName;
-        hyperShade -assign $blinnSHD;
+    //Blend Shapes.
+    if(`size $objBSNode` > 0){
+        blendShapesProc($objectName, $dupName);
     }
+
+    delete $objectName;
+    rename $dupName $objectName;
+    select $objectName;
+    Unparent;
 }
 
 /**********POST GOZBRUSH TO MAYA**********/
-global proc postGoZToMayaProc(string $objectPath){
-    string $objFileName = $objectPath + ".ma";
-    string $objName = `basenameEx($objFileName)`;
-    string $objShape[] = `listRelatives -s -ni $objName`;
+global proc postGoZToMayaProc(string $objectName){
+    string $objShape[] = `listRelatives -s -ni $objectName`;
     string $objBSNode[] = `listConnections -s 1 -d 0 -t "blendShape" $objShape`;
-    string $dupName = $objName + "_dup";
+    string $dupName = $objectName + "_dup";
+    int $checkTopo;
 
     if(`objExists "dupOrigMesh_grp"`){
-        int $objPolyCount[] = `polyEvaluate -v $objName`;
-        int $dupPolyCount[] = `polyEvaluate -v $dupName`;
+        select -hi "dupOrigMesh_grp";
+        select -d "dupOrigMesh_grp";
+        string $allDupObjs[] = `ls -sl -fl -typ "transform"`;
 
-        if($objPolyCount[0] == $dupPolyCount[0]){
-            blendShape -w 0 1.0 $objName $dupName;
-            delete -ch $dupName;
-            delSHDProc($objName);
+        for($dupObj in $allDupObjs){
+            string $origObjName = `substitute "_dup" $dupObj ""`;
 
-            //Blend Shapes.
-            if(`size $objBSNode` > 0){
-                blendShapesProc($objName);
+            if($dupObj == $dupName){//same name.
+
+                $checkTopo = checkTopoProc($objectName, $dupObj);
+
+                if($checkTopo == 1){//same name, same topo.
+
+                    ysGoZFunctionProc($objectName, $dupName, $objBSNode);
+
+                }else{//same name, different topo.
+                    select -r $dupName;
+                    hyperShade -smn;
+                    string $assignedSHD[] = `ls -sl -fl`;
+                    int $zbSHD = delSHDProc($objectName, $dupName);
+
+                    if($zbSHD == 1){
+                        select -r $objectName;
+                        hyperShade -a $assignedSHD[0];
+                        select -r $objectName;
+                    }
+                }
+            }else{//different name.
+
+                $checkTopo = checkTopoProc($objectName, $dupObj);
+
+                if($checkTopo == 1){//different name, same topo.
+                    string $confirm = `confirmDialog
+                                            -t "Confirm"
+                                            -ma "center"
+                                            -m ("The object \"" + $objectName + "\" has same poly count as the \"" + $origObjName + "\" but with different name.\nAre they the same objects?\n\nYes > Rename and update the original GoZ object.\nNo > Create a new GoZ object \"" + $objectName + "\".")
+                                            -b "Yes" -b "No" -db "Yes" -cb "No" -ds "No"`;
+
+                    if($confirm == "Yes"){
+                        rename $dupObj $dupName;
+                        ysGoZFunctionProc($objectName, $dupName, $objBSNode);
+                        delete $origObjName;
+                    }
+                }
             }
-
-            delete $objName;
-            rename $dupName $objName;
-            select "dupOrigMesh_grp";
-            ungroup;
-            select -r $objName;
-        }else{
-            select -r $dupName;
-            hyperShade -smn;
-            string $assignedSHD[] = `ls -sl -fl`;
-            delSHDProc($objName);
-            hyperShade -a $assignedSHD[0];
-            delete "dupOrigMesh_grp";
-            select -r $objName;
         }
+        delete "dupOrigMesh_grp";
+        select -r $objectName;
     }
 }
