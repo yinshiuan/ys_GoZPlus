@@ -1,0 +1,95 @@
+//ys_GoZPlus v.0.1
+//
+//Author: Yin Shiuan
+//Date: Jan 30, 2014
+//Platform: windows
+//Version: Maya2014
+//All Rights Reserved.
+//
+/**********DELETE ZBRUSH BLINN SHADER**********/
+global proc delSHDProc(string $objName){
+    select -r $objName;
+    hyperShade -smn;
+    string $selSHD[] = `ls -sl -fl`;
+    string $selSE[] = `listConnections -d 1 -t "shadingEngine" $selSHD`;
+    delete $selSHD $selSE;
+    select -r $objName;
+}
+
+/**********BLEND SHAPES**********/
+global proc blendShapesProc(string $objName){
+    string $objBSTargets[] = `blendShape -q -t $objName`;
+    string $dupName = $objName + "_dup";
+    string $dupShape[] = `listRelatives -s -ni $dupName`;
+    string $dupBSNode[] = `listConnections -s 1 -d 0 -t "blendShape" $dupShape`;
+
+    if(`size $dupBSNode` > 0){
+        delete $dupBSNode;
+    }
+
+    blendShape $dupName;
+
+    for($i=0; $i<`size $objBSTargets`; $i++){
+        blendShape -e -t $dupName $i $objBSTargets[$i] 1 $dupName;
+    }
+}
+
+/**********PRE GOZBRUSH TO MAYA**********/
+global proc preGoZToMayaProc(string $objectPath){
+    string $objFileName = $objectPath + ".ma";
+    string $objName = `basenameEx($objFileName)`;
+    string $dupName = $objName + "_dup";
+
+    if(`objExists $objName`){
+        string $dupOrigMesh[] = `duplicate -rr -n $dupName $objName`;
+        string $blinnSHD = `createNode blinn`;
+
+        if(!`objExists "dupOrigMesh_grp"`){
+            group -em -n "dupOrigMesh_grp";
+        }
+
+        parent $dupOrigMesh "dupOrigMesh_grp";
+        hide "dupOrigMesh_grp";
+        select -r $objName;
+        hyperShade -assign $blinnSHD;
+    }
+}
+
+/**********POST GOZBRUSH TO MAYA**********/
+global proc postGoZToMayaProc(string $objectPath){
+    string $objFileName = $objectPath + ".ma";
+    string $objName = `basenameEx($objFileName)`;
+    string $objShape[] = `listRelatives -s -ni $objName`;
+    string $objBSNode[] = `listConnections -s 1 -d 0 -t "blendShape" $objShape`;
+    string $dupName = $objName + "_dup";
+
+    if(`objExists "dupOrigMesh_grp"`){
+        int $objPolyCount[] = `polyEvaluate -v $objName`;
+        int $dupPolyCount[] = `polyEvaluate -v $dupName`;
+
+        if($objPolyCount[0] == $dupPolyCount[0]){
+            blendShape -w 0 1.0 $objName $dupName;
+            delete -ch $dupName;
+            delSHDProc($objName);
+
+            //Blend Shapes.
+            if(`size $objBSNode` > 0){
+                blendShapesProc($objName);
+            }
+
+            delete $objName;
+            rename $dupName $objName;
+            select "dupOrigMesh_grp";
+            ungroup;
+            select -r $objName;
+        }else{
+            select -r $dupName;
+            hyperShade -smn;
+            string $assignedSHD[] = `ls -sl -fl`;
+            delSHDProc($objName);
+            hyperShade -a $assignedSHD[0];
+            delete "dupOrigMesh_grp";
+            select -r $objName;
+        }
+    }
+}
